@@ -15,6 +15,7 @@ public enum ControlCmd: UInt8 {
     case streamEndP2C = 0x03
     case capabilities = 0x04
     case error = 0x05
+    case keyExchange = 0x06
 }
 
 public let firstHeaderSize = 6
@@ -22,3 +23,4 @@ public let subsequentHeaderSize = 4
 public let controlHeaderSize = 4
 public let attOverhead = 3
 public let blerpcErrorResponseTooLarge: UInt8 = 0x01
+public let capabilityFlagEncryptionSupported: UInt16 = 0x0001

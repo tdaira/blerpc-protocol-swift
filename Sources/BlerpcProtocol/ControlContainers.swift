@@ -40,12 +40,26 @@ public func makeStreamEndP2C(transactionId: UInt8, sequenceNumber: UInt8 = 0) ->
     )
 }
 
-public func makeCapabilitiesRequest(transactionId: UInt8, sequenceNumber: UInt8 = 0) -> Container {
-    Container(
+public func makeCapabilitiesRequest(
+    transactionId: UInt8,
+    maxRequestPayloadSize: UInt16 = 0,
+    maxResponsePayloadSize: UInt16 = 0,
+    flags: UInt16 = 0,
+    sequenceNumber: UInt8 = 0
+) -> Container {
+    var payload = Data(count: 6)
+    payload[0] = UInt8(maxRequestPayloadSize & 0xFF)
+    payload[1] = UInt8(maxRequestPayloadSize >> 8)
+    payload[2] = UInt8(maxResponsePayloadSize & 0xFF)
+    payload[3] = UInt8(maxResponsePayloadSize >> 8)
+    payload[4] = UInt8(flags & 0xFF)
+    payload[5] = UInt8(flags >> 8)
+    return Container(
         transactionId: transactionId,
         sequenceNumber: sequenceNumber,
         containerType: .control,
-        controlCmd: .capabilities
+        controlCmd: .capabilities,
+        payload: payload
     )
 }
 
@@ -53,13 +67,16 @@ public func makeCapabilitiesResponse(
     transactionId: UInt8,
     maxRequestPayloadSize: UInt16,
     maxResponsePayloadSize: UInt16,
+    flags: UInt16 = 0,
     sequenceNumber: UInt8 = 0
 ) -> Container {
-    var payload = Data(count: 4)
+    var payload = Data(count: 6)
     payload[0] = UInt8(maxRequestPayloadSize & 0xFF)
     payload[1] = UInt8(maxRequestPayloadSize >> 8)
     payload[2] = UInt8(maxResponsePayloadSize & 0xFF)
     payload[3] = UInt8(maxResponsePayloadSize >> 8)
+    payload[4] = UInt8(flags & 0xFF)
+    payload[5] = UInt8(flags >> 8)
     return Container(
         transactionId: transactionId,
         sequenceNumber: sequenceNumber,
@@ -76,5 +93,15 @@ public func makeErrorResponse(transactionId: UInt8, errorCode: UInt8, sequenceNu
         containerType: .control,
         controlCmd: .error,
         payload: Data([errorCode])
+    )
+}
+
+public func makeKeyExchange(transactionId: UInt8, payload: Data, sequenceNumber: UInt8 = 0) -> Container {
+    Container(
+        transactionId: transactionId,
+        sequenceNumber: sequenceNumber,
+        containerType: .control,
+        controlCmd: .keyExchange,
+        payload: payload
     )
 }
