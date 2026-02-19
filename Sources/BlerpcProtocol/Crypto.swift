@@ -403,4 +403,49 @@ public class PeripheralKeyExchange {
 
         return (step4, session)
     }
+
+    public func handleStep(_ payload: Data) throws -> (Data, BlerpcCryptoSession?) {
+        guard !payload.isEmpty else {
+            throw BlerpcCryptoError.invalidPayload("Empty key exchange payload")
+        }
+
+        switch payload[payload.startIndex] {
+        case keyExchangeStep1:
+            let response = try processStep1(payload)
+            return (response, nil)
+        case keyExchangeStep3:
+            let (step4, session) = try processStep3(payload)
+            return (step4, session)
+        default:
+            throw BlerpcCryptoError.invalidPayload(
+                "Invalid key exchange step: 0x\(String(payload[payload.startIndex], radix: 16, uppercase: false))"
+            )
+        }
+    }
+}
+
+public extension BlerpcCrypto {
+    static func centralPerformKeyExchange(
+        send: (Data) async throws -> Void,
+        receive: () async throws -> Data,
+        verifyKeyCb: ((Data) -> Bool)? = nil
+    ) async throws -> BlerpcCryptoSession {
+        let kx = CentralKeyExchange()
+
+        // Step 1: Send central's ephemeral public key
+        let step1 = kx.start()
+        try await send(step1)
+
+        // Step 2: Receive peripheral's response
+        let step2 = try await receive()
+
+        // Step 2 -> Step 3: Verify and produce confirmation
+        let step3 = try kx.processStep2(step2, verifyKeyCb: verifyKeyCb)
+        try await send(step3)
+
+        // Step 4: Receive peripheral's confirmation
+        let step4 = try await receive()
+
+        return try kx.finish(step4)
+    }
 }
