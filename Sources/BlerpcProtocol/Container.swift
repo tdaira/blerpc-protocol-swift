@@ -85,6 +85,9 @@ public struct Container: Equatable {
             let totalLength = UInt16(data[base + 3]) | (UInt16(data[base + 4]) << 8)
             let payloadLength = Int(data[base + 5])
             let payloadStart = base + firstHeaderSize
+            guard data.count >= payloadStart + payloadLength else {
+                throw BlerpcProtocolError.dataTooShort(data.count)
+            }
             let payload = data.subdata(in: payloadStart..<(payloadStart + payloadLength))
             return Container(
                 transactionId: transactionId,
@@ -100,6 +103,9 @@ public struct Container: Equatable {
             }
             let payloadLength = Int(data[data.startIndex + 3])
             let payloadStart = data.startIndex + subsequentHeaderSize
+            guard data.count >= payloadStart + payloadLength else {
+                throw BlerpcProtocolError.dataTooShort(data.count)
+            }
             let payload = data.subdata(in: payloadStart..<(payloadStart + payloadLength))
             return Container(
                 transactionId: transactionId,

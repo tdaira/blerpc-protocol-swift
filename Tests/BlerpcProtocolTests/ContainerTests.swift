@@ -96,6 +96,32 @@ final class ContainerTests: XCTestCase {
         }
     }
 
+    func testFirstContainerPayloadLengthExceedsData() {
+        // FIRST container header (6 bytes): tid=0, seq=0, flags=0x00 (type=FIRST),
+        // totalLength=100 (LE), payloadLength=10 (claims 10 bytes but only 2 available)
+        let data = Data([0x00, 0x00, 0x00, 0x64, 0x00, 0x0A, 0xAA, 0xBB])
+        XCTAssertThrowsError(try Container.deserialize(data)) { error in
+            if case BlerpcProtocolError.dataTooShort = error {
+                // expected
+            } else {
+                XCTFail("Expected dataTooShort error, got \(error)")
+            }
+        }
+    }
+
+    func testSubsequentContainerPayloadLengthExceedsData() {
+        // SUBSEQUENT container header (4 bytes): tid=0, seq=0, flags=0x40 (type=SUBSEQUENT),
+        // payloadLength=10 (claims 10 bytes but only 1 available)
+        let data = Data([0x00, 0x00, 0x40, 0x0A, 0xCC])
+        XCTAssertThrowsError(try Container.deserialize(data)) { error in
+            if case BlerpcProtocolError.dataTooShort = error {
+                // expected
+            } else {
+                XCTFail("Expected dataTooShort error, got \(error)")
+            }
+        }
+    }
+
     func testEquality() {
         let payload1 = Data([1, 2, 3])
         let payload2 = Data([1, 2, 4])

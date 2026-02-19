@@ -49,6 +49,37 @@ final class PeripheralHandleStepTests: XCTestCase {
     }
 }
 
+final class CounterZeroReplayTests: XCTestCase {
+    func testCounterZeroReplayAttack() throws {
+        let xKp = BlerpcCrypto.X25519KeyPair()
+        let edKp = BlerpcCrypto.Ed25519KeyPair()
+        let periphKx = try PeripheralKeyExchange(
+            x25519PrivateKey: xKp.privateKey.rawRepresentation,
+            ed25519PrivateKey: edKp.privateKey.rawRepresentation
+        )
+
+        let centralKx = CentralKeyExchange()
+        let step1 = centralKx.start()
+        let step2 = try periphKx.processStep1(step1)
+        let step3 = try centralKx.processStep2(step2)
+        let (step4, periphSession) = try periphKx.processStep3(step3)
+        let centralSession = try centralKx.finish(step4)
+
+        // Encrypt a message (counter=0)
+        let enc0 = try centralSession.encrypt(Data("msg0".utf8))
+        // First decrypt succeeds
+        let _ = try periphSession.decrypt(enc0)
+        // Replay of counter-0 must fail
+        XCTAssertThrowsError(try periphSession.decrypt(enc0)) { error in
+            if case BlerpcCryptoError.replayDetected = error {
+                // expected
+            } else {
+                XCTFail("Expected replayDetected error, got \(error)")
+            }
+        }
+    }
+}
+
 final class CentralPerformKeyExchangeTests: XCTestCase {
     func testFullHandshake() async throws {
         let xKp = BlerpcCrypto.X25519KeyPair()

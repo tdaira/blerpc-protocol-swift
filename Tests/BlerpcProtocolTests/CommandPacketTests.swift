@@ -70,6 +70,19 @@ final class CommandPacketTests: XCTestCase {
         }
     }
 
+    func testDataLengthExceedsActualData() {
+        // Build a valid header: type=REQUEST(0x00), nameLen=1, name="x",
+        // dataLen=100 (LE u16) but no actual data follows
+        let data = Data([0x00, 0x01, 0x78, 0x64, 0x00])
+        XCTAssertThrowsError(try CommandPacket.deserialize(data)) { error in
+            if case BlerpcProtocolError.dataTooShort = error {
+                // expected
+            } else {
+                XCTFail("Expected dataTooShort error, got \(error)")
+            }
+        }
+    }
+
     func testEquality() throws {
         let a = CommandPacket(cmdType: .request, cmdName: "echo", data: Data([1, 2, 3]))
         let b = CommandPacket(cmdType: .request, cmdName: "echo", data: Data([1, 2, 3]))

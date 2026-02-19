@@ -246,6 +246,7 @@ public class BlerpcCryptoSession {
     private let sessionKey: Data
     private var txCounter: UInt32 = 0
     private var rxCounter: UInt32 = 0
+    private var rxFirstDone = false
     private let txDirection: UInt8
     private let rxDirection: UInt8
 
@@ -267,10 +268,13 @@ public class BlerpcCryptoSession {
         let decrypted = try BlerpcCrypto.decryptCommand(
             sessionKey: sessionKey, direction: rxDirection, data: data
         )
-        guard decrypted.counter > rxCounter || (rxCounter == 0 && decrypted.counter == 0) else {
-            throw BlerpcCryptoError.replayDetected
+        if rxFirstDone {
+            guard decrypted.counter > rxCounter else {
+                throw BlerpcCryptoError.replayDetected
+            }
         }
         rxCounter = decrypted.counter
+        rxFirstDone = true
         return decrypted.plaintext
     }
 }

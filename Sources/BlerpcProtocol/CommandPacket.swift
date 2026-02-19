@@ -64,6 +64,9 @@ public struct CommandPacket: Equatable {
         let dataLen = Int(data[dataLenOffset]) | (Int(data[dataLenOffset + 1]) << 8)
 
         let payloadStart = dataLenOffset + 2
+        guard data.count >= payloadStart + dataLen else {
+            throw BlerpcProtocolError.dataTooShort(data.count)
+        }
         let payload = data.subdata(in: payloadStart..<(payloadStart + dataLen))
 
         return CommandPacket(cmdType: cmdType, cmdName: cmdName, data: payload)
