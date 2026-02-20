@@ -1,5 +1,6 @@
 import Foundation
 
+/// Errors thrown by bleRPC protocol operations.
 public enum BlerpcProtocolError: Error, Equatable {
     case dataTooShort(Int)
     case unknownContainerType(UInt8)
@@ -12,6 +13,11 @@ public enum BlerpcProtocolError: Error, Equatable {
     case unknownCommandType(UInt8)
 }
 
+/// A bleRPC container representing a single BLE notification/write.
+///
+/// Containers are the lowest-level wire unit. A FIRST container carries
+/// the total payload length; SUBSEQUENT containers carry continuation
+/// fragments; CONTROL containers carry protocol-level messages.
 public struct Container: Equatable {
     public let transactionId: UInt8
     public let sequenceNumber: UInt8
@@ -36,6 +42,7 @@ public struct Container: Equatable {
         self.payload = payload
     }
 
+    /// Serialize this container to its binary wire format.
     public func serialize() -> Data {
         let flags = (containerType.rawValue << 6) | (controlCmd.rawValue << 2)
 
@@ -60,6 +67,7 @@ public struct Container: Equatable {
         }
     }
 
+    /// Deserialize a container from its binary wire format.
     public static func deserialize(_ data: Data) throws -> Container {
         guard data.count >= 3 else {
             throw BlerpcProtocolError.dataTooShort(data.count)

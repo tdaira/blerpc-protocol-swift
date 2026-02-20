@@ -15,6 +15,7 @@ public let keyExchangeStep2: UInt8 = 0x02
 public let keyExchangeStep3: UInt8 = 0x03
 public let keyExchangeStep4: UInt8 = 0x04
 
+/// Errors thrown by bleRPC cryptographic operations.
 public enum BlerpcCryptoError: Error {
     case invalidPayload(String)
     case signatureVerificationFailed
@@ -24,7 +25,12 @@ public enum BlerpcCryptoError: Error {
     case keyExchangeFailed(String)
 }
 
+/// Cryptographic operations for bleRPC E2E encryption.
+///
+/// Provides X25519 key agreement, Ed25519 signing/verification,
+/// AES-128-GCM encryption, and HKDF-SHA256 key derivation.
 public struct BlerpcCrypto {
+    /// An X25519 key pair for ECDH key agreement.
     public struct X25519KeyPair {
         public let privateKey: Curve25519.KeyAgreement.PrivateKey
         public let publicKeyRaw: Data
@@ -41,6 +47,7 @@ public struct BlerpcCrypto {
         }
     }
 
+    /// An Ed25519 key pair for digital signatures.
     public struct Ed25519KeyPair {
         public let privateKey: Curve25519.Signing.PrivateKey
         public let publicKeyRaw: Data
@@ -57,6 +64,7 @@ public struct BlerpcCrypto {
         }
     }
 
+    /// Compute X25519 shared secret (32 bytes).
     public static func x25519SharedSecret(
         privateKey: Curve25519.KeyAgreement.PrivateKey,
         peerPublicRaw: Data
@@ -66,6 +74,9 @@ public struct BlerpcCrypto {
         return shared.withUnsafeBytes { Data($0) }
     }
 
+    /// Derive 16-byte AES-128 session key using HKDF-SHA256.
+    ///
+    /// Salt is `centralPubkey || peripheralPubkey`, info is `"blerpc-session-key"`.
     public static func deriveSessionKey(
         sharedSecret: Data,
         centralPubkey: Data,
@@ -82,6 +93,7 @@ public struct BlerpcCrypto {
         return derived.withUnsafeBytes { Data($0) }
     }
 
+    /// Sign a message with Ed25519, returning a 64-byte signature.
     public static func ed25519Sign(
         privateKey: Curve25519.Signing.PrivateKey,
         message: Data
@@ -89,6 +101,7 @@ public struct BlerpcCrypto {
         return try Data(privateKey.signature(for: message))
     }
 
+    /// Verify an Ed25519 signature. Returns true if valid.
     public static func ed25519Verify(
         publicKeyRaw: Data,
         message: Data,
@@ -110,6 +123,9 @@ public struct BlerpcCrypto {
         return nonce
     }
 
+    /// Encrypt a command payload with AES-128-GCM.
+    ///
+    /// Output format: `[counter:4B LE][ciphertext:NB][tag:16B]`.
     public static func encryptCommand(
         sessionKey: Data,
         counter: UInt32,
@@ -131,11 +147,13 @@ public struct BlerpcCrypto {
         return out
     }
 
+    /// Result of decrypting a command payload.
     public struct DecryptedCommand {
         public let counter: UInt32
         public let plaintext: Data
     }
 
+    /// Decrypt a command payload with AES-128-GCM.
     public static func decryptCommand(
         sessionKey: Data,
         direction: UInt8,
@@ -162,6 +180,7 @@ public struct BlerpcCrypto {
         return DecryptedCommand(counter: counter, plaintext: Data(plaintext))
     }
 
+    /// Encrypt a confirmation message for key exchange step 3/4.
     public static func encryptConfirmation(sessionKey: Data, message: Data) throws -> Data {
         let nonce = AES.GCM.Nonce()
         let key = SymmetricKey(data: sessionKey)
@@ -173,6 +192,7 @@ public struct BlerpcCrypto {
         return out
     }
 
+    /// Decrypt a confirmation message from key exchange step 3/4.
     public static func decryptConfirmation(sessionKey: Data, data: Data) throws -> Data {
         guard data.count >= 44 else {
             throw BlerpcCryptoError.invalidPayload("Confirmation too short: \(data.count)")
@@ -242,6 +262,9 @@ public struct BlerpcCrypto {
     }
 }
 
+/// Stateful encryption/decryption session established after key exchange.
+///
+/// Tracks send/receive counters and provides replay protection.
 public class BlerpcCryptoSession {
     private let sessionKey: Data
     private var txCounter: UInt32 = 0
@@ -256,6 +279,7 @@ public class BlerpcCryptoSession {
         self.rxDirection = isCentral ? directionP2C : directionC2P
     }
 
+    /// Encrypt plaintext and advance the send counter.
     public func encrypt(_ plaintext: Data) throws -> Data {
         let result = try BlerpcCrypto.encryptCommand(
             sessionKey: sessionKey, counter: txCounter, direction: txDirection, plaintext: plaintext
@@ -264,6 +288,7 @@ public class BlerpcCryptoSession {
         return result
     }
 
+    /// Decrypt data with replay protection. Throws on replay or auth failure.
     public func decrypt(_ data: Data) throws -> Data {
         let decrypted = try BlerpcCrypto.decryptCommand(
             sessionKey: sessionKey, direction: rxDirection, data: data
@@ -279,6 +304,10 @@ public class BlerpcCryptoSession {
     }
 }
 
+/// Central-side key exchange state machine.
+///
+/// Usage: ``start()`` → send step 1 → receive step 2 → ``processStep2(_:verifyKeyCb:)`` →
+/// send step 3 → receive step 4 → ``finish(_:)`` → ``BlerpcCryptoSession``.
 public class CentralKeyExchange {
     private var keyPair: BlerpcCrypto.X25519KeyPair?
     private var sessionKey: Data?
@@ -288,12 +317,17 @@ public class CentralKeyExchange {
         sessionKey = nil
     }
 
+    /// Generate an ephemeral X25519 key pair and return the step 1 payload.
     public func start() -> Data {
         let kp = BlerpcCrypto.X25519KeyPair()
         keyPair = kp
         return BlerpcCrypto.buildStep1Payload(centralX25519Pubkey: kp.publicKeyRaw)
     }
 
+    /// Process step 2 from peripheral: verify signature, derive session key,
+    /// and produce step 3 payload with encrypted confirmation.
+    ///
+    /// - Parameter verifyKeyCb: Optional callback to verify the peripheral's Ed25519 public key (TOFU).
     public func processStep2(
         _ step2Payload: Data,
         verifyKeyCb: ((Data) -> Bool)? = nil
@@ -335,6 +369,7 @@ public class CentralKeyExchange {
         return BlerpcCrypto.buildStep3Payload(confirmationEncrypted: encryptedConfirm)
     }
 
+    /// Process step 4 from peripheral, verify confirmation, and return the session.
     public func finish(_ step4Payload: Data) throws -> BlerpcCryptoSession {
         guard let sk = sessionKey else {
             throw BlerpcCryptoError.sessionNotActive
@@ -350,6 +385,10 @@ public class CentralKeyExchange {
     }
 }
 
+/// Peripheral-side key exchange state machine.
+///
+/// Use ``handleStep(_:)`` for automatic step dispatching, or call
+/// ``processStep1(_:)`` and ``processStep3(_:)`` directly.
 public class PeripheralKeyExchange {
     private let x25519KeyPair: BlerpcCrypto.X25519KeyPair
     private let ed25519KeyPair: BlerpcCrypto.Ed25519KeyPair
@@ -361,6 +400,7 @@ public class PeripheralKeyExchange {
         sessionKey = nil
     }
 
+    /// Process step 1 from central: sign, derive session key, and produce step 2 payload.
     public func processStep1(_ step1Payload: Data) throws -> Data {
         let centralX25519Pubkey = try BlerpcCrypto.parseStep1Payload(step1Payload)
 
@@ -387,6 +427,7 @@ public class PeripheralKeyExchange {
         )
     }
 
+    /// Process step 3 from central: verify confirmation, produce step 4 + session.
     public func processStep3(_ step3Payload: Data) throws -> (Data, BlerpcCryptoSession) {
         guard let sk = sessionKey else {
             throw BlerpcCryptoError.sessionNotActive
@@ -408,6 +449,9 @@ public class PeripheralKeyExchange {
         return (step4, session)
     }
 
+    /// Handle a single key exchange step, dispatching to ``processStep1(_:)`` or ``processStep3(_:)``.
+    ///
+    /// - Returns: Tuple of (response payload, session or nil if not yet established).
     public func handleStep(_ payload: Data) throws -> (Data, BlerpcCryptoSession?) {
         guard !payload.isEmpty else {
             throw BlerpcCryptoError.invalidPayload("Empty key exchange payload")
@@ -429,6 +473,13 @@ public class PeripheralKeyExchange {
 }
 
 public extension BlerpcCrypto {
+    /// Perform the complete 4-step central key exchange using send/receive callbacks.
+    ///
+    /// - Parameters:
+    ///   - send: Callback to send a key exchange payload over BLE.
+    ///   - receive: Callback to receive a key exchange payload from BLE.
+    ///   - verifyKeyCb: Optional callback to verify the peripheral's Ed25519 public key.
+    /// - Returns: An established ``BlerpcCryptoSession`` ready for encryption/decryption.
     static func centralPerformKeyExchange(
         send: (Data) async throws -> Void,
         receive: () async throws -> Data,

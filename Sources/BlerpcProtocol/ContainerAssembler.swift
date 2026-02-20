@@ -1,5 +1,9 @@
 import Foundation
 
+/// Reassembles fragmented containers back into complete payloads.
+///
+/// Feed incoming containers via ``feed(_:)``; when all fragments of a
+/// transaction have arrived, the complete payload is returned.
 public class ContainerAssembler {
     private struct AssemblyState {
         let totalLength: Int
@@ -12,6 +16,9 @@ public class ContainerAssembler {
 
     public init() {}
 
+    /// Feed a received container into the assembler.
+    ///
+    /// - Returns: The complete reassembled payload when all fragments have arrived, or nil.
     public func feed(_ container: Container) -> Data? {
         if container.containerType == .control {
             return nil
@@ -58,6 +65,7 @@ public class ContainerAssembler {
         return nil
     }
 
+    /// Clear all in-progress assembly state.
     public func reset() {
         transactions.removeAll()
     }

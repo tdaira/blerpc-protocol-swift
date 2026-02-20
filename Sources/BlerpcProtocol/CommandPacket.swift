@@ -1,10 +1,15 @@
 import Foundation
 
+/// Command type: request from central or response from peripheral.
 public enum CommandType: UInt8 {
     case request = 0
     case response = 1
 }
 
+/// A bleRPC command packet with a type, command name, and protobuf data.
+///
+/// Command packets are the application-level messages that ride inside
+/// the container layer's reassembled payloads.
 public struct CommandPacket: Equatable {
     public let cmdType: CommandType
     public let cmdName: String
@@ -16,6 +21,7 @@ public struct CommandPacket: Equatable {
         self.data = data
     }
 
+    /// Serialize this command packet to its binary wire format.
     public func serialize() throws -> Data {
         guard !cmdName.isEmpty else {
             throw BlerpcProtocolError.cmdNameEmpty
@@ -39,6 +45,7 @@ public struct CommandPacket: Equatable {
         return result
     }
 
+    /// Deserialize a command packet from its binary wire format.
     public static func deserialize(_ data: Data) throws -> CommandPacket {
         guard data.count >= 2 else {
             throw BlerpcProtocolError.dataTooShort(data.count)
