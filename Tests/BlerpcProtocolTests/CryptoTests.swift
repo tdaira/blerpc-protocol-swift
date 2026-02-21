@@ -3,10 +3,8 @@ import XCTest
 
 final class PeripheralHandleStepTests: XCTestCase {
     private func makePeripheralKx() throws -> PeripheralKeyExchange {
-        let xKp = BlerpcCrypto.X25519KeyPair()
         let edKp = BlerpcCrypto.Ed25519KeyPair()
         return try PeripheralKeyExchange(
-            x25519PrivateKey: xKp.privateKey.rawRepresentation,
             ed25519PrivateKey: edKp.privateKey.rawRepresentation
         )
     }
@@ -51,10 +49,8 @@ final class PeripheralHandleStepTests: XCTestCase {
 
 final class CounterZeroReplayTests: XCTestCase {
     func testCounterZeroReplayAttack() throws {
-        let xKp = BlerpcCrypto.X25519KeyPair()
         let edKp = BlerpcCrypto.Ed25519KeyPair()
         let periphKx = try PeripheralKeyExchange(
-            x25519PrivateKey: xKp.privateKey.rawRepresentation,
             ed25519PrivateKey: edKp.privateKey.rawRepresentation
         )
 
@@ -82,10 +78,8 @@ final class CounterZeroReplayTests: XCTestCase {
 
 final class CentralPerformKeyExchangeTests: XCTestCase {
     func testFullHandshake() async throws {
-        let xKp = BlerpcCrypto.X25519KeyPair()
         let edKp = BlerpcCrypto.Ed25519KeyPair()
         let periphKx = try PeripheralKeyExchange(
-            x25519PrivateKey: xKp.privateKey.rawRepresentation,
             ed25519PrivateKey: edKp.privateKey.rawRepresentation
         )
 
@@ -112,10 +106,8 @@ final class CentralPerformKeyExchangeTests: XCTestCase {
     }
 
     func testVerifyCbReject() async throws {
-        let xKp = BlerpcCrypto.X25519KeyPair()
         let edKp = BlerpcCrypto.Ed25519KeyPair()
         let periphKx = try PeripheralKeyExchange(
-            x25519PrivateKey: xKp.privateKey.rawRepresentation,
             ed25519PrivateKey: edKp.privateKey.rawRepresentation
         )
 
@@ -139,10 +131,8 @@ final class CentralPerformKeyExchangeTests: XCTestCase {
     }
 
     func testVerifyCbAccept() async throws {
-        let xKp = BlerpcCrypto.X25519KeyPair()
         let edKp = BlerpcCrypto.Ed25519KeyPair()
         let periphKx = try PeripheralKeyExchange(
-            x25519PrivateKey: xKp.privateKey.rawRepresentation,
             ed25519PrivateKey: edKp.privateKey.rawRepresentation
         )
 

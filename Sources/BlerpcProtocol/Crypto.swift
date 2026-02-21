@@ -390,19 +390,21 @@ public class CentralKeyExchange {
 /// Use ``handleStep(_:)`` for automatic step dispatching, or call
 /// ``processStep1(_:)`` and ``processStep3(_:)`` directly.
 public class PeripheralKeyExchange {
-    private let x25519KeyPair: BlerpcCrypto.X25519KeyPair
     private let ed25519KeyPair: BlerpcCrypto.Ed25519KeyPair
     private var sessionKey: Data?
 
-    public init(x25519PrivateKey: Data, ed25519PrivateKey: Data) throws {
-        x25519KeyPair = try BlerpcCrypto.X25519KeyPair(privateKeyRaw: x25519PrivateKey)
+    public init(ed25519PrivateKey: Data) throws {
         ed25519KeyPair = try BlerpcCrypto.Ed25519KeyPair(privateKeyRaw: ed25519PrivateKey)
         sessionKey = nil
     }
 
-    /// Process step 1 from central: sign, derive session key, and produce step 2 payload.
+    /// Process step 1 from central: generate ephemeral X25519 keypair,
+    /// sign, derive session key, and produce step 2 payload.
     public func processStep1(_ step1Payload: Data) throws -> Data {
         let centralX25519Pubkey = try BlerpcCrypto.parseStep1Payload(step1Payload)
+
+        // Generate ephemeral X25519 keypair (forward secrecy)
+        let x25519KeyPair = BlerpcCrypto.X25519KeyPair()
 
         let signMsg = centralX25519Pubkey + x25519KeyPair.publicKeyRaw
         let signature = try BlerpcCrypto.ed25519Sign(
