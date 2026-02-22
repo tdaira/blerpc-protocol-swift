@@ -21,7 +21,7 @@ Add the package via Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tdaira/blerpc-protocol-swift", from: "0.3.0")
+    .package(url: "https://github.com/tdaira/blerpc-protocol-swift", from: "0.5.0")
 ]
 ```
 
