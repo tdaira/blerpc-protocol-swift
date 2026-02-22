@@ -23,6 +23,8 @@ public enum BlerpcCryptoError: Error {
     case replayDetected
     case sessionNotActive
     case keyExchangeFailed(String)
+    case invalidState(String)
+    case counterOverflow
 }
 
 /// Cryptographic operations for bleRPC E2E encryption.
@@ -272,6 +274,7 @@ public class BlerpcCryptoSession {
     private var rxFirstDone = false
     private let txDirection: UInt8
     private let rxDirection: UInt8
+    private let lock = NSLock()
 
     public init(sessionKey: Data, isCentral: Bool) {
         self.sessionKey = sessionKey
@@ -281,6 +284,11 @@ public class BlerpcCryptoSession {
 
     /// Encrypt plaintext and advance the send counter.
     public func encrypt(_ plaintext: Data) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        guard txCounter < UInt32.max else {
+            throw BlerpcCryptoError.counterOverflow
+        }
         let result = try BlerpcCrypto.encryptCommand(
             sessionKey: sessionKey, counter: txCounter, direction: txDirection, plaintext: plaintext
         )
@@ -290,6 +298,8 @@ public class BlerpcCryptoSession {
 
     /// Decrypt data with replay protection. Throws on replay or auth failure.
     public func decrypt(_ data: Data) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
         let decrypted = try BlerpcCrypto.decryptCommand(
             sessionKey: sessionKey, direction: rxDirection, data: data
         )
@@ -311,6 +321,7 @@ public class BlerpcCryptoSession {
 public class CentralKeyExchange {
     private var keyPair: BlerpcCrypto.X25519KeyPair?
     private var sessionKey: Data?
+    private var state = 0
 
     public init() {
         keyPair = nil
@@ -318,9 +329,13 @@ public class CentralKeyExchange {
     }
 
     /// Generate an ephemeral X25519 key pair and return the step 1 payload.
-    public func start() -> Data {
+    public func start() throws -> Data {
+        guard state == 0 else {
+            throw BlerpcCryptoError.invalidState("Invalid state for start()")
+        }
         let kp = BlerpcCrypto.X25519KeyPair()
         keyPair = kp
+        state = 1
         return BlerpcCrypto.buildStep1Payload(centralX25519Pubkey: kp.publicKeyRaw)
     }
 
@@ -332,6 +347,9 @@ public class CentralKeyExchange {
         _ step2Payload: Data,
         verifyKeyCb: ((Data) -> Bool)? = nil
     ) throws -> Data {
+        guard state == 1 else {
+            throw BlerpcCryptoError.invalidState("Invalid state for processStep2()")
+        }
         guard let kp = keyPair else {
             throw BlerpcCryptoError.sessionNotActive
         }
@@ -366,11 +384,15 @@ public class CentralKeyExchange {
             sessionKey: sessionKey!,
             message: confirmCentral
         )
+        state = 2
         return BlerpcCrypto.buildStep3Payload(confirmationEncrypted: encryptedConfirm)
     }
 
     /// Process step 4 from peripheral, verify confirmation, and return the session.
     public func finish(_ step4Payload: Data) throws -> BlerpcCryptoSession {
+        guard state == 2 else {
+            throw BlerpcCryptoError.invalidState("Invalid state for finish()")
+        }
         guard let sk = sessionKey else {
             throw BlerpcCryptoError.sessionNotActive
         }
@@ -392,6 +414,7 @@ public class CentralKeyExchange {
 public class PeripheralKeyExchange {
     private let ed25519KeyPair: BlerpcCrypto.Ed25519KeyPair
     private var sessionKey: Data?
+    private var state = 0
 
     public init(ed25519PrivateKey: Data) throws {
         ed25519KeyPair = try BlerpcCrypto.Ed25519KeyPair(privateKeyRaw: ed25519PrivateKey)
@@ -401,6 +424,9 @@ public class PeripheralKeyExchange {
     /// Process step 1 from central: generate ephemeral X25519 keypair,
     /// sign, derive session key, and produce step 2 payload.
     public func processStep1(_ step1Payload: Data) throws -> Data {
+        guard state == 0 else {
+            throw BlerpcCryptoError.invalidState("Invalid state for processStep1()")
+        }
         let centralX25519Pubkey = try BlerpcCrypto.parseStep1Payload(step1Payload)
 
         // Generate ephemeral X25519 keypair (forward secrecy)
@@ -422,6 +448,7 @@ public class PeripheralKeyExchange {
             peripheralPubkey: x25519KeyPair.publicKeyRaw
         )
 
+        state = 1
         return BlerpcCrypto.buildStep2Payload(
             peripheralX25519Pubkey: x25519KeyPair.publicKeyRaw,
             ed25519Signature: signature,
@@ -431,6 +458,9 @@ public class PeripheralKeyExchange {
 
     /// Process step 3 from central: verify confirmation, produce step 4 + session.
     public func processStep3(_ step3Payload: Data) throws -> (Data, BlerpcCryptoSession) {
+        guard state == 1 else {
+            throw BlerpcCryptoError.invalidState("Invalid state for processStep3()")
+        }
         guard let sk = sessionKey else {
             throw BlerpcCryptoError.sessionNotActive
         }
@@ -461,9 +491,15 @@ public class PeripheralKeyExchange {
 
         switch payload[payload.startIndex] {
         case keyExchangeStep1:
+            guard state == 0 else {
+                throw BlerpcCryptoError.invalidState("Invalid state for step 1")
+            }
             let response = try processStep1(payload)
             return (response, nil)
         case keyExchangeStep3:
+            guard state == 1 else {
+                throw BlerpcCryptoError.invalidState("Invalid state for step 3")
+            }
             let (step4, session) = try processStep3(payload)
             return (step4, session)
         default:
@@ -471,6 +507,11 @@ public class PeripheralKeyExchange {
                 "Invalid key exchange step: 0x\(String(payload[payload.startIndex], radix: 16, uppercase: false))"
             )
         }
+    }
+
+    public func reset() {
+        state = 0
+        sessionKey = nil
     }
 }
 
@@ -490,7 +531,7 @@ public extension BlerpcCrypto {
         let kx = CentralKeyExchange()
 
         // Step 1: Send central's ephemeral public key
-        let step1 = kx.start()
+        let step1 = try kx.start()
         try await send(step1)
 
         // Step 2: Receive peripheral's response
