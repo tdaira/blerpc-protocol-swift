@@ -23,4 +23,5 @@ public let subsequentHeaderSize = 4
 public let controlHeaderSize = 4
 public let attOverhead = 3
 public let blerpcErrorResponseTooLarge: UInt8 = 0x01
+public let blerpcErrorBusy: UInt8 = 0x02
 public let capabilityFlagEncryptionSupported: UInt16 = 0x0001
