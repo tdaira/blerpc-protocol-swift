@@ -515,19 +515,66 @@ public class PeripheralKeyExchange {
     }
 }
 
+/// TOFU (Trust On First Use) store for peripheral Ed25519 identity keys.
+///
+/// The E2E handshake signature binds only the ephemeral X25519 keys, not the
+/// peripheral's long-term identity key, so MitM resistance depends on the
+/// central pinning that identity. Implementations supply platform-appropriate
+/// persistence (file, UserDefaults, …); this library owns the pinning policy
+/// and logic (``tofuVerify(store:deviceId:ed25519Pubkey:)``).
+public protocol KnownKeyStore {
+    /// Stored hex-encoded Ed25519 public key for `deviceId`, or nil if unknown.
+    func get(deviceId: String) -> String?
+
+    /// Persist the hex-encoded Ed25519 public key for `deviceId`.
+    func put(deviceId: String, hexEd25519Pubkey: String)
+}
+
+/// TOFU verification against a ``KnownKeyStore``: trust (and pin) the key on
+/// first use, and reject a key that differs from the pinned one afterwards.
+public func tofuVerify(store: KnownKeyStore, deviceId: String, ed25519Pubkey: Data) -> Bool {
+    let hex = ed25519Pubkey.map { String(format: "%02x", $0) }.joined()
+    if let stored = store.get(deviceId: deviceId) {
+        return stored == hex
+    }
+    store.put(deviceId: deviceId, hexEd25519Pubkey: hex)
+    return true
+}
+
 public extension BlerpcCrypto {
     /// Perform the complete 4-step central key exchange using send/receive callbacks.
     ///
-    /// - Parameters:
-    ///   - send: Callback to send a key exchange payload over BLE.
-    ///   - receive: Callback to receive a key exchange payload from BLE.
-    ///   - verifyKeyCb: Optional callback to verify the peripheral's Ed25519 public key.
-    /// - Returns: An established ``BlerpcCryptoSession`` ready for encryption/decryption.
+    /// Identity pinning is **on by default** (fail-closed): pass `knownKeys` and
+    /// `deviceId` to pin the peripheral's Ed25519 identity (TOFU), or set
+    /// `pinIdentity` to false to opt out (encrypted but NOT authenticated).
+    /// `verifyKeyCb` is an escape hatch for custom verification and takes
+    /// precedence when provided.
+    ///
+    /// - Throws: ``BlerpcCryptoError/keyExchangeFailed(_:)`` if pinning is on
+    ///   (the default) but no `knownKeys`/`deviceId` and no `verifyKeyCb` given.
     static func centralPerformKeyExchange(
         send: (Data) async throws -> Void,
         receive: () async throws -> Data,
+        knownKeys: KnownKeyStore? = nil,
+        deviceId: String? = nil,
+        pinIdentity: Bool = true,
         verifyKeyCb: ((Data) -> Bool)? = nil
     ) async throws -> BlerpcCryptoSession {
+        let effectiveVerifyCb: ((Data) -> Bool)?
+        if let cb = verifyKeyCb {
+            effectiveVerifyCb = cb
+        } else if !pinIdentity {
+            effectiveVerifyCb = nil
+        } else if let store = knownKeys, let id = deviceId {
+            effectiveVerifyCb = { pub in tofuVerify(store: store, deviceId: id, ed25519Pubkey: pub) }
+        } else {
+            throw BlerpcCryptoError.keyExchangeFailed(
+                "Identity pinning is on by default but no KnownKeyStore/deviceId was provided. "
+                    + "Pass knownKeys and deviceId to pin the peripheral identity (TOFU), or set "
+                    + "pinIdentity = false to opt out (encrypted but unauthenticated)."
+            )
+        }
+
         let kx = CentralKeyExchange()
 
         // Step 1: Send central's ephemeral public key
@@ -538,7 +585,7 @@ public extension BlerpcCrypto {
         let step2 = try await receive()
 
         // Step 2 -> Step 3: Verify and produce confirmation
-        let step3 = try kx.processStep2(step2, verifyKeyCb: verifyKeyCb)
+        let step3 = try kx.processStep2(step2, verifyKeyCb: effectiveVerifyCb)
         try await send(step3)
 
         // Step 4: Receive peripheral's confirmation

@@ -94,7 +94,8 @@ final class CentralPerformKeyExchangeTests: XCTestCase {
             },
             receive: {
                 payloads.removeFirst()
-            }
+            },
+            pinIdentity: false
         )
 
         XCTAssertNotNil(periphSession)
@@ -156,6 +157,69 @@ final class CentralPerformKeyExchangeTests: XCTestCase {
         XCTAssertNotNil(session)
         XCTAssertEqual(seenKeys.count, 1)
         XCTAssertEqual(seenKeys[0], edKp.publicKeyRaw)
+    }
+
+    // MARK: - TOFU identity pinning
+
+    private final class InMemoryKeyStore: KnownKeyStore {
+        var map: [String: String] = [:]
+        func get(deviceId: String) -> String? { map[deviceId] }
+        func put(deviceId: String, hexEd25519Pubkey: String) { map[deviceId] = hexEd25519Pubkey }
+    }
+
+    private func runExchange(
+        seed: Data,
+        store: KnownKeyStore? = nil,
+        deviceId: String? = nil,
+        pinIdentity: Bool = true
+    ) async throws -> BlerpcCryptoSession {
+        let periphKx = try PeripheralKeyExchange(ed25519PrivateKey: seed)
+        var payloads: [Data] = []
+        return try await BlerpcCrypto.centralPerformKeyExchange(
+            send: { payload in
+                let (response, _) = try periphKx.handleStep(payload)
+                payloads.append(response)
+            },
+            receive: { payloads.removeFirst() },
+            knownKeys: store,
+            deviceId: deviceId,
+            pinIdentity: pinIdentity
+        )
+    }
+
+    private func newSeed() -> Data { BlerpcCrypto.Ed25519KeyPair().privateKey.rawRepresentation }
+
+    func testTofuPinsThenMatches() async throws {
+        let seed = newSeed()
+        let store = InMemoryKeyStore()
+        _ = try await runExchange(seed: seed, store: store, deviceId: "dev-1") // first use: pinned
+        XCTAssertEqual(store.map.count, 1)
+        _ = try await runExchange(seed: seed, store: store, deviceId: "dev-1") // same key: matches
+    }
+
+    func testTofuRejectsChangedKey() async throws {
+        let store = InMemoryKeyStore()
+        _ = try await runExchange(seed: newSeed(), store: store, deviceId: "dev-1") // pin
+        do {
+            _ = try await runExchange(seed: newSeed(), store: store, deviceId: "dev-1")
+            XCTFail("Expected TOFU rejection for a changed key")
+        } catch {
+            // Expected
+        }
+    }
+
+    func testFailClosedWithoutStore() async throws {
+        do {
+            _ = try await runExchange(seed: newSeed()) // pinIdentity defaults true, no store
+            XCTFail("Expected fail-closed error")
+        } catch {
+            // Expected
+        }
+    }
+
+    func testOptOutSkipsPinning() async throws {
+        let session = try await runExchange(seed: newSeed(), pinIdentity: false)
+        XCTAssertNotNil(session)
     }
 }
 
